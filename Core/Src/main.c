@@ -92,8 +92,11 @@ void MAX7219WriteValues(uint8_t dig0, uint8_t dig1, uint8_t dig2);
 /* USER CODE BEGIN 0 */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
   HAL_CAN_DeactivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
+
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
   xTaskNotifyFromISR(canReceiveTaskHandle, 1, eSetValueWithOverwrite, &xHigherPriorityTaskWoken);
+
   portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 /* USER CODE END 0 */
@@ -433,9 +436,11 @@ void MAX7219WriteReg(uint8_t reg, uint8_t contents){
   HAL_SPI_Transmit(&hspi1, buff, 2, 2);
   HAL_GPIO_WritePin(LOAD_GPIO_Port, LOAD_Pin, GPIO_PIN_SET);
 }
+
 void MAX7219EnableCommunication(){
   HAL_GPIO_WritePin(OE_GPIO_Port, OE_Pin, GPIO_PIN_SET);
 }
+
 void MAX7219WriteValues(uint8_t dig0, uint8_t dig1, uint8_t dig2){
   MAX7219WriteReg(MAX7219_REG_DIG0, dig0);
   MAX7219WriteReg(MAX7219_REG_DIG1, dig1);
@@ -472,6 +477,8 @@ void StartCanReceiveTask(void const * argument)
 {
   /* USER CODE BEGIN StartCanReceiveTask */
   /* Infinite loop */
+  HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
+
   for(;;)
   {
     if(ulTaskNotifyTake(pdTRUE, 500)){
@@ -500,7 +507,6 @@ void StartButtonTask(void const * argument)
 {
   /* USER CODE BEGIN StartButtonTask */
   /* Infinite loop */
-  HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
   static uint32_t buttonCounter;
   static uint32_t mailbox;
   static uint8_t data;
