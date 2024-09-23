@@ -40,6 +40,9 @@
 #define CAN_MSG_TIME 0b001
 #define CAN_MSG_ERROR 0b111
 #define CAN_MSG_BUZZER 0b100
+
+#define DISPLAY_CODE_TIME 0
+#define DISPLAY_CODE_ERR 1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -66,6 +69,12 @@ osStaticThreadDef_t buttonTaskControlBlock;
 osThreadId canPeriodicHandle;
 uint32_t canPeriodicBuffer[ 64 ];
 osStaticThreadDef_t canPeriodicControlBlock;
+osThreadId displayTaskHandle;
+uint32_t displayTaskBuffer[ 64 ];
+osStaticThreadDef_t displayTaskControlBlock;
+osMessageQId displayQueueHandle;
+uint8_t displayQueueBuffer[ 4 * sizeof( uint32_t ) ];
+osStaticMessageQDef_t displayQueueControlBlock;
 /* USER CODE BEGIN PV */
 CAN_RxHeaderTypeDef receivedHeader;
 uint8_t receivedData[8];
@@ -81,6 +90,7 @@ void StartDefaultTask(void const * argument);
 void StartCanReceiveTask(void const * argument);
 void StartButtonTask(void const * argument);
 void StartCanPeriodic(void const * argument);
+void StartDisplayTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 void MAX7219WriteReg(uint8_t reg, uint8_t contents);
@@ -153,6 +163,11 @@ int main(void)
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* definition and creation of displayQueue */
+  osMessageQStaticDef(displayQueue, 4, uint32_t, displayQueueBuffer, &displayQueueControlBlock);
+  displayQueueHandle = osMessageCreate(osMessageQ(displayQueue), NULL);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -173,6 +188,10 @@ int main(void)
   /* definition and creation of canPeriodic */
   osThreadStaticDef(canPeriodic, StartCanPeriodic, osPriorityBelowNormal, 0, 64, canPeriodicBuffer, &canPeriodicControlBlock);
   canPeriodicHandle = osThreadCreate(osThread(canPeriodic), NULL);
+
+  /* definition and creation of displayTask */
+  osThreadStaticDef(displayTask, StartDisplayTask, osPriorityBelowNormal, 0, 64, displayTaskBuffer, &displayTaskControlBlock);
+  displayTaskHandle = osThreadCreate(osThread(displayTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -477,17 +496,32 @@ void StartCanReceiveTask(void const * argument)
 {
   /* USER CODE BEGIN StartCanReceiveTask */
   /* Infinite loop */
+  uint8_t displayData[4];
+
   HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
 
   for(;;)
   {
     if(ulTaskNotifyTake(pdTRUE, 500)){
-      HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &receivedHeader, receivedData);
-      uint8_t min = receivedData[0];
-      uint8_t sec1 = receivedData[1] / 10;
-      uint8_t sec2 = receivedData[1] % 10;
-      MAX7219WriteValues(min, sec1, sec2);
       HAL_GPIO_WritePin(TEST_LED_GPIO_Port, TEST_LED_Pin, GPIO_PIN_SET);
+      HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &receivedHeader, receivedData);
+
+      if (receivedHeader.StdId == (CAN_CONTROLLER_ID | CAN_MSG_TIME)){
+        displayData[0] = receivedData[0];
+        displayData[1] = receivedData[1] / 10;
+        displayData[2] = receivedData[1] % 10;
+        displayData[3] = DISPLAY_CODE_TIME;
+        xQueueSend(displayQueueHandle, displayData, 0);
+      }
+
+      if (receivedHeader.StdId == (CAN_CONTROLLER_ID | CAN_MSG_ERROR)){
+        displayData[0] = 0b1011;
+        displayData[1] = receivedData[0] / 10;
+        displayData[2] = receivedData[0] % 10;
+        displayData[3] = DISPLAY_CODE_ERR;
+        xQueueSend(displayQueueHandle, displayData, 0);
+      }
+
       HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
     } else {
       HAL_GPIO_WritePin(TEST_LED_GPIO_Port, TEST_LED_Pin, GPIO_PIN_RESET);
@@ -527,7 +561,7 @@ void StartButtonTask(void const * argument)
       buttonCounter = 0;
     }
 
-    vTaskDelay(10);
+    vTaskDelay(5);
   }
   /* USER CODE END StartButtonTask */
 }
@@ -557,6 +591,30 @@ void StartCanPeriodic(void const * argument)
     vTaskDelay(200);
   }
   /* USER CODE END StartCanPeriodic */
+}
+
+/* USER CODE BEGIN Header_StartDisplayTask */
+/**
+* @brief Function implementing the displayTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartDisplayTask */
+void StartDisplayTask(void const * argument)
+{
+  /* USER CODE BEGIN StartDisplayTask */
+  /* Infinite loop */
+  //{dig0, dig1, dig2, type}
+  uint8_t displayData[4];
+  for(;;)
+  {
+    xQueueReceive(displayQueueHandle, displayData, portMAX_DELAY);
+    MAX7219WriteValues(displayData[0], displayData[1], displayData[2]);
+    if (displayData[3] == DISPLAY_CODE_ERR){
+      vTaskDelay(5000);
+    }
+  }
+  /* USER CODE END StartDisplayTask */
 }
 
 /**
