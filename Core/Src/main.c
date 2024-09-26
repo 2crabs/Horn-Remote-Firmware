@@ -72,16 +72,25 @@ osStaticThreadDef_t canPeriodicControlBlock;
 osThreadId displayTaskHandle;
 uint32_t displayTaskBuffer[ 64 ];
 osStaticThreadDef_t displayTaskControlBlock;
-osThreadId ledTaskHandle;
-uint32_t ledTaskBuffer[ 64 ];
-osStaticThreadDef_t ledTaskControlBlock;
+osThreadId buzzerTaskHandle;
+uint32_t buzzerTaskBuffer[ 64 ];
+osStaticThreadDef_t buzzerTaskControlBlock;
 osMessageQId displayQueueHandle;
 uint8_t displayQueueBuffer[ 4 * sizeof( uint32_t ) ];
 osStaticMessageQDef_t displayQueueControlBlock;
 /* USER CODE BEGIN PV */
 CAN_RxHeaderTypeDef receivedHeader;
 uint8_t receivedData[8];
-uint8_t receivedTime[2];
+uint16_t receivedTime;
+uint8_t receivedIsRunning;
+uint8_t receivedMode;
+
+const uint16_t buzzerTimes_Three[10];
+const uint16_t buzzerLengths_Three[10];
+const uint16_t buzzerTimes_Five[10];
+const uint16_t buzzerLengths_Five[10];
+uint8_t buzzerState;
+uint8_t currentBuzz = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -95,12 +104,13 @@ void StartCanReceiveTask(void const * argument);
 void StartButtonTask(void const * argument);
 void StartCanPeriodic(void const * argument);
 void StartDisplayTask(void const * argument);
-void StartLedTask(void const * argument);
+void StartBuzzerTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 void MAX7219WriteReg(uint8_t reg, uint8_t contents);
 void MAX7219EnableCommunication();
 void MAX7219WriteValues(uint8_t dig0, uint8_t dig1, uint8_t dig2);
+void setBuzzer(uint8_t state);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -198,9 +208,9 @@ int main(void)
   osThreadStaticDef(displayTask, StartDisplayTask, osPriorityBelowNormal, 0, 64, displayTaskBuffer, &displayTaskControlBlock);
   displayTaskHandle = osThreadCreate(osThread(displayTask), NULL);
 
-  /* definition and creation of ledTask */
-  osThreadStaticDef(ledTask, StartLedTask, osPriorityLow, 0, 64, ledTaskBuffer, &ledTaskControlBlock);
-  ledTaskHandle = osThreadCreate(osThread(ledTask), NULL);
+  /* definition and creation of buzzerTask */
+  osThreadStaticDef(buzzerTask, StartBuzzerTask, osPriorityLow, 0, 64, buzzerTaskBuffer, &buzzerTaskControlBlock);
+  buzzerTaskHandle = osThreadCreate(osThread(buzzerTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -474,6 +484,20 @@ void MAX7219WriteValues(uint8_t dig0, uint8_t dig1, uint8_t dig2){
   MAX7219WriteReg(MAX7219_REG_DIG1, dig1);
   MAX7219WriteReg(MAX7219_REG_DIG2, dig2);
 }
+
+void setBuzzer(uint8_t state){
+  static uint32_t mailbox;
+  static uint8_t data;
+  static CAN_TxHeaderTypeDef header;
+  header.StdId = CAN_REMOTE_ID | CAN_MSG_BUZZER;
+  header.DLC = 0x01;
+  header.IDE = CAN_ID_STD;
+  header.RTR = CAN_RTR_DATA;
+
+  data = state;
+
+  HAL_CAN_AddTxMessage(&hcan, &header, &data, &mailbox);
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -516,8 +540,11 @@ void StartCanReceiveTask(void const * argument)
       HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &receivedHeader, receivedData);
 
       if (receivedHeader.StdId == (CAN_CONTROLLER_ID | CAN_MSG_TIME)){
-        receivedTime[0] = receivedData[0];
-        receivedTime[1] = receivedData[1];
+        receivedTime = (receivedData[0]*60) + receivedData[1];
+        receivedIsRunning = receivedData[2] >> 1;
+        receivedMode = receivedData[2] | 1;
+        currentBuzz = currentBuzz * receivedIsRunning;
+
         displayData[0] = receivedData[0];
         displayData[1] = receivedData[1] / 10;
         displayData[2] = receivedData[1] % 10;
@@ -561,6 +588,8 @@ void StartButtonTask(void const * argument)
   header.IDE = CAN_ID_STD;
   header.RTR = CAN_RTR_DATA;
 
+  HAL_GPIO_WritePin(HORN_LED_GPIO_Port, HORN_LED_Pin, GPIO_PIN_SET);
+
   for(;;)
   {
     if (HAL_GPIO_ReadPin(START_SWITCH_GPIO_Port, START_SWITCH_Pin) == GPIO_PIN_RESET){
@@ -571,6 +600,8 @@ void StartButtonTask(void const * argument)
       }
       buttonCounter = 0;
     }
+
+    HAL_GPIO_WritePin(START_LED_GPIO_Port, START_LED_Pin, (receivedTime+1)%2);
 
     vTaskDelay(5);
   }
@@ -628,30 +659,22 @@ void StartDisplayTask(void const * argument)
   /* USER CODE END StartDisplayTask */
 }
 
-/* USER CODE BEGIN Header_StartLedTask */
+/* USER CODE BEGIN Header_StartBuzzerTask */
 /**
-* @brief Function implementing the ledTask thread.
+* @brief Function implementing the buzzerTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartLedTask */
-void StartLedTask(void const * argument)
+/* USER CODE END Header_StartBuzzerTask */
+void StartBuzzerTask(void const * argument)
 {
-  /* USER CODE BEGIN StartLedTask */
+  /* USER CODE BEGIN StartBuzzerTask */
   /* Infinite loop */
-  HAL_GPIO_WritePin(HORN_LED_GPIO_Port, HORN_LED_Pin, GPIO_PIN_SET);
   for(;;)
   {
-    if(((receivedTime[0] == 3) && (receivedTime[1] == 30)) ||
-       ((receivedTime[0] == 6) && (receivedTime[1] == 00)))
-    {
-      HAL_GPIO_WritePin(START_LED_GPIO_Port, START_LED_Pin, GPIO_PIN_SET);
-    } else {
-      HAL_GPIO_TogglePin(START_LED_GPIO_Port, START_LED_Pin);
-    }
-    vTaskDelay(750);
+    osDelay(1);
   }
-  /* USER CODE END StartLedTask */
+  /* USER CODE END StartBuzzerTask */
 }
 
 /**
