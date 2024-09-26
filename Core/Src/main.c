@@ -43,6 +43,9 @@
 
 #define DISPLAY_CODE_TIME 0
 #define DISPLAY_CODE_ERR 1
+
+#define HORN_MODE_THREE_MINUTE 1
+#define HORN_MODE_FIVE_MINUTE 0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -81,14 +84,16 @@ osStaticMessageQDef_t displayQueueControlBlock;
 /* USER CODE BEGIN PV */
 CAN_RxHeaderTypeDef receivedHeader;
 uint8_t receivedData[8];
-uint16_t receivedTime;
-uint8_t receivedIsRunning;
-uint8_t receivedMode;
+uint16_t receivedTime = 210;
+uint8_t receivedIsRunning = 0;
+uint8_t receivedMode = HORN_MODE_THREE_MINUTE;
 
-const uint16_t buzzerTimes_Three[10];
-const uint16_t buzzerLengths_Three[10];
-const uint16_t buzzerTimes_Five[10];
-const uint16_t buzzerLengths_Five[10];
+//long = 900, short = 150
+const uint16_t buzzerTimes_Three[29] =   {195, 185, 184, 183, 182, 181,  180, 135, 125, 124, 123, 122, 121,  120,   75,  65,  64,  63,  62,  61,  60,   15,   5,   4,   3,   2,   1,   0};
+const uint16_t buzzerLengths_Three[29] = {900, 150, 150, 150, 150, 150, 3900, 900, 150, 150, 150, 150, 150, 2400,  900, 150, 150, 150, 150, 150, 900,  900, 150, 150, 150, 150, 150, 900};
+
+const uint16_t buzzerTimes_Five[28] =   {315, 305, 304, 303, 302, 301, 300, 255, 245, 244, 243, 242, 241, 240,  75,  65,  64,  63,  62,  61,  60,  15,   5,   4,   3,   2,   1,   0};
+const uint16_t buzzerLengths_Five[28] = {900, 150, 150, 150, 150, 150, 900, 900, 150, 150, 150, 150, 150, 900, 900, 150, 150, 150, 150, 150, 900, 900, 150, 150, 150, 150, 150, 900};
 uint8_t buzzerState;
 uint8_t currentBuzz = 0;
 /* USER CODE END PV */
@@ -542,7 +547,7 @@ void StartCanReceiveTask(void const * argument)
       if (receivedHeader.StdId == (CAN_CONTROLLER_ID | CAN_MSG_TIME)){
         receivedTime = (receivedData[0]*60) + receivedData[1];
         receivedIsRunning = receivedData[2] >> 1;
-        receivedMode = receivedData[2] | 1;
+        receivedMode = receivedData[2] & 1;
         currentBuzz = currentBuzz * receivedIsRunning;
 
         displayData[0] = receivedData[0];
@@ -670,9 +675,56 @@ void StartBuzzerTask(void const * argument)
 {
   /* USER CODE BEGIN StartBuzzerTask */
   /* Infinite loop */
+  vTaskDelay(10000);
   for(;;)
   {
-    osDelay(1);
+    if(receivedMode == HORN_MODE_THREE_MINUTE){
+
+      /* THREE MINUTES */
+      while((receivedTime < buzzerTimes_Three[currentBuzz])
+         && ((currentBuzz+1) < (sizeof(buzzerTimes_Three)/2))){
+        currentBuzz++;
+      }
+
+      if(receivedTime == buzzerTimes_Three[currentBuzz]){
+        setBuzzer(1);
+        vTaskDelay(buzzerLengths_Three[currentBuzz]);
+        setBuzzer(0);
+        if ((currentBuzz+1) < (sizeof(buzzerTimes_Three)/2)){
+          currentBuzz++;
+        } else {
+          vTaskDelay(2000);
+        }
+      }
+      /* THREE MINUTES */
+
+    } else {
+
+      /* FIVE MINUTES */
+      while((receivedTime < buzzerTimes_Five[currentBuzz])
+         && ((currentBuzz+1) < (sizeof(buzzerTimes_Five)/2))){
+        currentBuzz++;
+      }
+
+      if(receivedTime == buzzerTimes_Five[currentBuzz]){
+        setBuzzer(1);
+        vTaskDelay(buzzerLengths_Five[currentBuzz]);
+        setBuzzer(0);
+        if ((currentBuzz+1) < (sizeof(buzzerTimes_Five)/2)){
+          currentBuzz++;
+        } else {
+          //handle last buzz
+
+          while (receivedIsRunning && (receivedTime <= buzzerTimes_Five[currentBuzz])){
+            vTaskDelay(1000);
+          }
+          currentBuzz = 0;
+        }
+      }
+      /* FIVE MINUTES */
+
+    }
+    vTaskDelay(14);
   }
   /* USER CODE END StartBuzzerTask */
 }
