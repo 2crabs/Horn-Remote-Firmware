@@ -568,6 +568,11 @@ void StartCanReceiveTask(void const * argument)
       HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
     } else {
       HAL_GPIO_WritePin(TEST_LED_GPIO_Port, TEST_LED_Pin, GPIO_PIN_RESET);
+      displayData[0] = 0b1011;
+      displayData[1] = 0;
+      displayData[2] = 0;
+      displayData[3] = DISPLAY_CODE_TIME;
+      xQueueSend(displayQueueHandle, displayData, 0);
     }
   }
   /* USER CODE END StartCanReceiveTask */
